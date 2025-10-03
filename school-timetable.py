@@ -79,43 +79,20 @@ def build_and_solve(num_days: int = 5, num_hours: int = 5, all_groups: List[str]
                             hour_vars = [assignments[key] for key in assignments  if key[0] == group and key[1] == subject.id and key[2] == teacher.id and key[3] == d]
                             model.Add(sum(hour_vars) <= subject.max_hours_per_day)
 
-#    # If a subject is taught more than one hour per day in a group, the hours must be consecutive.
-#     for group in all_groups:
-#         course = group.split('-')[0]
-#         for subject in all_subjects:
-#             if subject.course == course:
-#                 for d in range(num_days):
-#                     # For each hour, create a variable indicating if there's a class or not
-#                     hour_vars = []
-#                     for h in range(num_hours):
-#                         # Find all possible assignments for this hour
-#                         vars_at_hour = [assignments[key] for key in assignments 
-#                                         if key[0] == group and key[1] == subject.id 
-#                                         and key[3] == d and key[4] == h]
-#                         if vars_at_hour:
-#                             # If there are possible assignments, create variable representing "there's a class at this hour"
-#                             hour_var = model.NewBoolVar(f"class_{subject.id}_{group}_{d}_{h}")
-#                             model.AddBoolOr(vars_at_hour).OnlyEnforceIf(hour_var)
-#                             model.AddBoolAnd([v.Not() for v in vars_at_hour]).OnlyEnforceIf(hour_var.Not())
-#                             hour_vars.append(hour_var)
-
-#                     if len(hour_vars) > 1:
-#                         # For each non-adjacent pair of hours
-#                         for h1 in range(len(hour_vars)):
-#                             for h2 in range(h1 + 2, len(hour_vars)):  # h2 > h1 + 1
-#                                 # Create variable for this constraint
-#                                 consecutive = model.NewBoolVar(f"{subject.id}:{group}:{d}:{h1}-{h2}")
-                                
-#                                 # If h1 and h2 are assigned
-#                                 model.AddBoolAnd([hour_vars[h1], hour_vars[h2]]).OnlyEnforceIf(consecutive)
-
-#                                 # Then all intermediate hours must be assigned
-#                                 middle_hours = [hour_vars[h] for h in range(h1 + 1, h2)]
-#                                 if middle_hours:
-#                                     model.AddBoolAnd(middle_hours).OnlyEnforceIf(consecutive)
-
-#                                 # Force the constraint to be satisfied
-#                                 model.Add(consecutive == 1)
+    # If a subject is taught more than one hour per day in a group, the hours must be consecutive.
+    for group in all_groups:
+        course = group.split('-')[0]
+        for subject in all_subjects:
+            if subject.course == course:
+                for d in range(num_days):
+                    hour_vars = [assignments[key] for key in assignments if key[0] == group and key[1] == subject.id and key[3] == d]
+                    if len(hour_vars) >= 2:
+                        for h1 in range(len(hour_vars)):
+                            for h2 in range(h1 + 1, len(hour_vars)):
+                                not_consecutive = model.NewBoolVar(f"not_consecutive_{group}_{subject.id}_{d}_{h1}_{h2}")
+                                model.Add(h2 != h1 + 1).OnlyEnforceIf(not_consecutive)
+                                model.AddBoolAnd([hour_vars[h1], hour_vars[h2]]).OnlyEnforceIf(not_consecutive)
+                                model.Add(not_consecutive == 0)
 
     # Solve the model
     solver = cp_model.CpSolver()
