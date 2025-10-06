@@ -79,20 +79,55 @@ def build_and_solve(num_days: int = 5, num_hours: int = 5, all_groups: List[str]
                             hour_vars = [assignments[key] for key in assignments  if key[0] == group and key[1] == subject.id and key[2] == teacher.id and key[3] == d]
                             model.Add(sum(hour_vars) <= subject.max_hours_per_day)
 
+    # A group cannot have more than one subject assigned in the same hour.
+    for group in all_groups:
+        for d in range(num_days):
+            for h in range(num_hours):
+                model.Add(sum(assignments[k] for k in assignments if k[0]==group and k[3]==d and k[4]==h) <= 1)
+            
     # If a subject is taught more than one hour per day in a group, the hours must be consecutive.
     for group in all_groups:
         course = group.split('-')[0]
         for subject in all_subjects:
             if subject.course == course:
                 for d in range(num_days):
-                    hour_vars = [assignments[key] for key in assignments if key[0] == group and key[1] == subject.id and key[3] == d]
-                    if len(hour_vars) >= 2:
-                        for h1 in range(len(hour_vars)):
-                            for h2 in range(h1 + 1, len(hour_vars)):
-                                not_consecutive = model.NewBoolVar(f"not_consecutive_{group}_{subject.id}_{d}_{h1}_{h2}")
-                                model.Add(h2 != h1 + 1).OnlyEnforceIf(not_consecutive)
-                                model.AddBoolAnd([hour_vars[h1], hour_vars[h2]]).OnlyEnforceIf(not_consecutive)
-                                model.Add(not_consecutive == 0)
+                    # 1) create aggregated variables y_h
+                    y_vars = []
+                    for h in range(num_hours):
+                        y = model.NewBoolVar(f"y_{group}_{subject.id}_d{d}_h{h}")  # y[group,subject,day,h]
+                        # Link y with the assignment variables (sum over teachers)
+                        assign_vars = [
+                            assignments[key]
+                            for key in assignments
+                            if key[0] == group and key[1] == subject.id and key[3] == d and key[4] == h
+                        ]
+                        if assign_vars:
+                            # Equality: y == sum(assign_vars). (Assumes no two teachers simultaneously for the same group-subject-slot.)
+                            model.Add(sum(assign_vars) == y)
+                        else:
+                            # if there are no possible teachers for that slot, force y == 0
+                            model.Add(y == 0)
+                        y_vars.append(y)
+
+                    # 2) define starts: start_h = 1 if y_h == 1 and y_{h-1} == 0
+                    starts = []
+                    for h in range(num_hours):
+                        s = model.NewBoolVar(f"start_{group}_{subject.id}_d{d}_h{h}")
+                        starts.append(s)
+                        if h == 0:
+                            # start at h=0 <=> y_0
+                            model.Add(s == y_vars[0])
+                        else:
+                            # linearization of s == y_h & (not y_{h-1}):
+                            #  s >= y_h - y_{h-1}
+                            #  s <= y_h
+                            #  s <= 1 - y_{h-1}
+                            model.Add(s >= y_vars[h] - y_vars[h-1])
+                            model.Add(s <= y_vars[h])
+                            model.Add(s <= 1 - y_vars[h-1])
+
+                    # 3) at most one block start per day -> ensures a single contiguous block (or none)
+                    model.Add(sum(starts) <= 1)
 
     # Solve the model
     solver = cp_model.CpSolver()
@@ -147,13 +182,19 @@ def print_timetables(solver: cp_model.CpSolver, assignments: Dict, num_days: int
 
 
 if __name__ == "__main__":
-    
-    all_groups = ["1-A", "1-B"]
-    math1 = Subject(id="math1", name="Maths", course="1", weekly_hours=10, max_hours_per_day=2)
-    all_subjects = [math1]
 
-    John = Teacher(id=1, name="John", max_hours_week=25, subjects=[math1])
-    all_teachers = [John]
+    # groups
+    all_groups = ["1-A", "1-B"]
+    
+    # subjects
+    math1 = Subject(id="math1", name="Maths", course="1", weekly_hours=10, max_hours_per_day=2)
+    eng1 = Subject(id="eng1", name="English", course="1", weekly_hours=10, max_hours_per_day=2)
+    all_subjects = [math1,eng1]
+
+    # teachers
+    John = Teacher(id=1, name="John", max_hours_week=20, subjects=[math1])
+    Jane = Teacher(id=2, name="Jane", max_hours_week=20, subjects=[eng1])
+    all_teachers = [John, Jane]
 
     solver, assignments = build_and_solve(num_days=5, num_hours=5, all_groups=all_groups, all_subjects=all_subjects, all_teachers=all_teachers)
     
